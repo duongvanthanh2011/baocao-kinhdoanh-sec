@@ -17,7 +17,7 @@ from st_aggrid import AgGrid
 from st_aggrid.grid_options_builder import GridOptionsBuilder
 
 # Import các phần từ các module con
-from report_utils import configure_standard_grid_columns, update_manual_inputs_in_state
+from report_utils import configure_standard_grid_columns, update_manual_inputs_in_state, configure_report_1_grid_columns, RELATION_MAPPING
 from report_calculations import (
     add_indicator_columns, 
     compute_report_1, 
@@ -38,7 +38,7 @@ __all__ = [
 
 def render_report_1(result):
     """Hiển thị Báo cáo 1 bằng bảng phân cấp AgGrid hỗ trợ chỉnh sửa và tính toán động."""
-    st.subheader("Bản xem trước: Báo cáo theo Đợt học thử & Người phụ trách")
+    st.subheader("Bản xem trước: Báo cáo theo Người phụ trách & Nhóm khách hàng")
     
     state_key = "report_1_edited_df"
     
@@ -49,9 +49,8 @@ def render_report_1(result):
         # Nếu khóa nhóm hoặc số dòng thay đổi (do thay đổi bộ lọc), reset dữ liệu chỉnh sửa
         current_state = st.session_state[state_key]
         if (len(current_state) != len(result) or 
-            not (current_state['ĐỢT HỌC THỬ'].equals(result['ĐỢT HỌC THỬ']) and 
-                 current_state['Phòng ban'].equals(result['Phòng ban']) and
-                 current_state['Người phụ trách'].equals(result['Người phụ trách']))):
+            not (current_state['Người phụ trách'].equals(result['Người phụ trách']) and 
+                 current_state['Nhóm khách hàng'].equals(result['Nhóm khách hàng']))):
             st.session_state[state_key] = result.copy()
             
     df_to_show = st.session_state[state_key]
@@ -59,19 +58,14 @@ def render_report_1(result):
     # Xây dựng GridOptions cho AgGrid
     gb = GridOptionsBuilder.from_dataframe(df_to_show)
     
-    # Thiết lập nhóm phân cấp
-    gb.configure_column("ĐỢT HỌC THỬ", rowGroup=True, hide=True)
-    gb.configure_column("Phòng ban", rowGroup=True, hide=True)
+    # Thiết lập nhóm phân cấp: chỉ group theo Người phụ trách
+    gb.configure_column("Người phụ trách", rowGroup=True, hide=True)
+    gb.configure_column("Nhóm khách hàng", width=160, pinned="left")
     gb.configure_column("Thời gian xuất data", width=140, pinned="left")
-    gb.configure_column("Người phụ trách", width=160, pinned="left")
     
-    # Cấu hình các cột số lượng, nhập liệu và tỉ lệ KPI (tái sử dụng từ report_utils)
-    count_cols = [
-        'Sai Sót - Sai Đối Tượng', 'Tiềm Năng Chưa Gọi', 
-        'Data Trao Đổi Được', 'Data Tiềm Năng', 'Data Cọc Chốt', 'Tổng số Data',
-        'Cọc Khác', 'Tổng Cọc Học Thử'
-    ]
-    configure_standard_grid_columns(gb, count_cols)
+    # Cấu hình các cột của Báo cáo 1
+    status_cols = list(RELATION_MAPPING.keys())
+    configure_report_1_grid_columns(gb, status_cols)
     
     grid_options = gb.build()
     grid_options["groupIncludeFooter"] = True
@@ -90,9 +84,6 @@ def render_report_1(result):
         key="grid_report_1"
     )
     
-    # Lưu lại thay đổi nhập tay từ người dùng vào session state (tái sử dụng từ report_utils)
-    update_manual_inputs_in_state(grid_response, state_key, ['ĐỢT HỌC THỬ', 'Phòng ban', 'Người phụ trách'])
-
     # Chuẩn bị dữ liệu Excel hoàn chỉnh và nút download
     df_excel = prepare_excel_report_1(st.session_state[state_key])
     

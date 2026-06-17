@@ -17,6 +17,22 @@ TRAO_DOI_LABELS = ["ĐANG TRAO ĐỔI", "HỌC VIÊN TIỀM NĂNG", "ĐÃ CỌC"
 TIEM_NANG_LABELS = ["HỌC VIÊN TIỀM NĂNG", "ĐÃ CỌC", "ĐÃ CHỐT - TIỀM NĂNG UPSALE", "ĐÃ CHỐT FULL"]
 COC_CHOT_LABELS = ["ĐÃ CỌC", "ĐÃ CHỐT - TIỀM NĂNG UPSALE", "ĐÃ CHỐT FULL"]
 
+# Mapping các cột báo cáo mới của Báo cáo 1 với các giá trị trong db/API
+RELATION_MAPPING = {
+    "DATA MỚI PTKD": ["DATA MỚI PTKD"],
+    "CHƯA TRAO ĐỔI ĐƯỢC": ["CHƯA TRAO ĐỔI ĐƯỢC", "CHƯA TRAO ĐỔI ĐƯỢCC"],
+    "HỌC VIÊN TIỀM NĂNG": ["HỌC VIÊN TIỀM NĂNG"],
+    "MEETING PTKD": ["MEETING PTKD"],
+    "ĐÃ CỌC": ["ĐÃ CỌC"],
+    "ĐÃ CHỐT": ["ĐÃ CHỐT", "ĐÃ CHỐT FULL", "ĐÃ CHỐT - TIỀM NĂNG UPSALE"],
+    "DATA SAI SỐ": ["SAI SỐ", "DATA SAI SỐ"],
+    "SAI ĐỐI TƯỢNG": ["SAI ĐỐI TƯỢNG", "SAI ĐỐI TƯỢNG."],
+    "SEC TỪ CHỐI": ["SEC TỪ CHỐI", "SEC từ chối"],
+    "DỪNG FOLLOW": ["DỪNG FOLLOW"],
+    "DATA PTKD CHƯA KHAI THÁC": ["DATA PTKD CHƯA KHAI THÁC"]
+}
+
+
 # ==========================================
 # CẤU HÌNH PHẦN TRĂM & TÔ MÀU KPI CHO AGGRID
 # ==========================================
@@ -260,3 +276,39 @@ def update_manual_inputs_in_state(grid_response, state_key, keys):
                 
                 df_updated = df_state_idx.reset_index()
                 st.session_state[state_key] = df_updated[orig_cols]
+
+
+# JS Formatter gộp số lượng và tỉ lệ phần trăm làm hiển thị
+combined_formatter = JsCode("""
+function(params) {
+    var val = params.value;
+    if (val === undefined || val === null) {
+        val = 0;
+    }
+    var total = 0;
+    if (params.node && params.node.group) {
+        total = params.node.aggData ? (params.node.aggData['Tổng số Data'] || 0) : 0;
+    } else {
+        total = params.data ? (params.data['Tổng số Data'] || 0) : 0;
+    }
+    var pct = total ? (val / total * 100).toFixed(2) : '0.00';
+    return val + ' (' + pct + '%)';
+}
+""")
+
+
+def configure_report_1_grid_columns(gb, status_cols):
+    """
+    Cấu hình các cột đếm số lượng gộp tỉ lệ phần trăm cho Báo cáo 1.
+    """
+    gb.configure_column("Tổng số Data", aggFunc="sum", width=140)
+    
+    # Cấu hình các cột đếm gộp
+    for col in status_cols:
+        gb.configure_column(
+            col,
+            aggFunc="sum",
+            valueFormatter=combined_formatter,
+            width=180
+        )
+
