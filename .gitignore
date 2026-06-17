@@ -1,0 +1,7 @@
+*.ipynb
+.env
+*.pyc
+**/__pycache__
+**/.venv
+**/app_demo.py
+*.log
