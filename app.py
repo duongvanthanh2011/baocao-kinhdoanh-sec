@@ -198,19 +198,19 @@ if st.session_state["raw_df"] is not None:
     st.markdown("---")
     st.subheader("⚙️ Bộ lọc báo cáo (Sau khi tải dữ liệu)")
 
-    # Lấy danh sách đợt học thử duy nhất từ dữ liệu đã tải
-    unique_sessions = sorted([str(x) for x in df_raw["ĐỢT HỌC THỬ"].unique() if x is not None])
+    # Lấy danh sách người phụ trách duy nhất từ dữ liệu đã tải
+    unique_managers = sorted([str(x) for x in df_raw["Người phụ trách"].unique() if x is not None])
 
-    selected_sessions = st.multiselect(
-        "Lọc theo Đợt học thử",
-        options=unique_sessions,
-        default=unique_sessions,
-        help="Chọn một hoặc nhiều đợt học thử để tính toán lại báo cáo bên dưới."
+    selected_managers = st.multiselect(
+        "Lọc theo Người phụ trách",
+        options=unique_managers,
+        default=unique_managers,
+        help="Chọn một hoặc nhiều người phụ trách để tính toán lại báo cáo bên dưới."
     )
 
-    # Lọc dữ liệu theo đợt học thử đã chọn
-    if selected_sessions:
-        df_filtered = df_raw[df_raw["ĐỢT HỌC THỬ"].isin(selected_sessions)].copy()
+    # Lọc dữ liệu theo người phụ trách đã chọn
+    if selected_managers:
+        df_filtered = df_raw[df_raw["Người phụ trách"].isin(selected_managers)].copy()
     else:
         df_filtered = df_raw.copy()
 
