@@ -158,7 +158,7 @@ def compute_excel_percentages(df_excel):
 
 
 def prepare_excel_report_1(df_edited):
-    """Tính toán bảng hoàn chỉnh gồm phần trăm gộp trực tiếp vào ô tương ứng và dòng tổng cộng cho Báo cáo 1 (dùng cho download Excel)."""
+    """Tính toán bảng hoàn chỉnh gồm các cột tỉ lệ mới và dòng tổng cộng cho Báo cáo 1 (dùng cho download Excel)."""
     df_excel = df_edited.copy()
     
     if not df_excel.empty:
@@ -173,14 +173,13 @@ def prepare_excel_report_1(df_edited):
             
         df_excel = pd.concat([df_excel, pd.DataFrame([total_row])], ignore_index=True)
         
-        # Gộp số lượng và tỷ lệ phần trăm thành định dạng "Số_lượng (Tỷ_lệ%)"
-        for col in RELATION_MAPPING.keys():
-            df_excel[col] = df_excel.apply(
-                lambda r, c=col: f"{int(r[c])} ({(r[c] / r['Tổng số Data'] * 100):.2f}%)" if r['Tổng số Data'] > 0 else f"{int(r[c])} (0.00%)",
-                axis=1
-            )
+        # Tính các cột tỉ lệ mới
+        tot = df_excel['Tổng số Data']
+        df_excel['TỈ LỆ CỌC - CHỐT'] = ((df_excel['ĐÃ CHỐT'] + df_excel['ĐÃ CỌC']) / tot * 100).fillna(0)
+        df_excel['TỈ LỆ HỌC VIÊN TIỀM NĂNG'] = ((df_excel['ĐÃ CHỐT'] + df_excel['ĐÃ CỌC'] + df_excel['MEETING PTKD']) / tot * 100).fillna(0)
+        df_excel['TỈ LỆ DATA ĐANG CHĂM SÓC'] = ((df_excel['ĐÃ CHỐT'] + df_excel['ĐÃ CỌC'] + df_excel['MEETING PTKD'] + df_excel['HỌC VIÊN TIỀM NĂNG']) / tot * 100).fillna(0)
             
-    cols_to_keep = ['Thời gian xuất data', 'Người phụ trách', 'Nhóm khách hàng', 'Tổng số Data'] + list(RELATION_MAPPING.keys())
+    cols_to_keep = ['Thời gian xuất data', 'Người phụ trách', 'Nhóm khách hàng', 'Tổng số Data'] + list(RELATION_MAPPING.keys()) + ['TỈ LỆ CỌC - CHỐT', 'TỈ LỆ HỌC VIÊN TIỀM NĂNG', 'TỈ LỆ DATA ĐANG CHĂM SÓC']
     return df_excel[cols_to_keep]
 
 

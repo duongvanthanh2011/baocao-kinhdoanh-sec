@@ -55,13 +55,21 @@ def render_report_1(result):
             
     df_to_show = st.session_state[state_key]
     
+    # Thêm các cột tỉ lệ placeholder (giá trị được tính động bởi valueGetter trong AgGrid)
+    if 'TỈ LỆ CỌC - CHỐT' not in df_to_show.columns:
+        df_to_show = df_to_show.copy()
+        df_to_show['TỈ LỆ CỌC - CHỐT'] = 0.0
+        df_to_show['TỈ LỆ HỌC VIÊN TIỀM NĂNG'] = 0.0
+        df_to_show['TỈ LỆ DATA ĐANG CHĂM SÓC'] = 0.0
+        st.session_state[state_key] = df_to_show
+    
     # Xây dựng GridOptions cho AgGrid
     gb = GridOptionsBuilder.from_dataframe(df_to_show)
     
     # Thiết lập nhóm phân cấp: chỉ group theo Người phụ trách
     gb.configure_column("Người phụ trách", rowGroup=True, hide=True)
-    gb.configure_column("Nhóm khách hàng", width=160, pinned="left")
-    gb.configure_column("Thời gian xuất data", width=140, pinned="left")
+    gb.configure_column("Nhóm khách hàng", width=140, pinned="left", wrapHeaderText=True, autoHeaderHeight=True)
+    gb.configure_column("Thời gian xuất data", width=130, pinned="left", wrapHeaderText=True, autoHeaderHeight=True)
     
     # Cấu hình các cột của Báo cáo 1
     status_cols = list(RELATION_MAPPING.keys())

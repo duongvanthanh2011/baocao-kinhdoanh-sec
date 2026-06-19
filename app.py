@@ -13,7 +13,7 @@ from datetime import datetime
 # Import các module nội bộ
 from config import get_api_key, get_url_base, get_headers
 from api_client import get_account_types, get_account_sources, get_users, fetch_accounts_with_progress
-from data_processing import expand_source_ids, build_filtering_conditions, transform_dataframe, build_department_options, build_user_ids_by_departments
+from data_processing import expand_source_ids, build_filtering_conditions, transform_dataframe, build_manager_options
 from reports import add_indicator_columns, compute_report_1, compute_report_2, render_report_1, render_report_2
 
 # ==========================================
@@ -57,17 +57,17 @@ if not API_KEY:
 # HÀM TIỆN ÍCH: TÍNH HASH BỘ LỌC
 # ==========================================
 
-def compute_fetch_key(selected_departments, selected_sources, selected_types, date_range):
+def compute_fetch_key(selected_managers, selected_sources, selected_types, date_range):
     """
     Tính hash key từ bộ lọc để xác định liệu dữ liệu đã tải có trùng với yêu cầu mới.
     Nếu key giống → skip API fetch, dùng dữ liệu đã có.
     """
     try:
-        dept_ids = sorted([str(x.get("dept_id", "")) for x in selected_departments])
+        mgr_ids = sorted([str(x.get("user_id", "")) for x in selected_managers])
         src_ids = sorted([str(x.get("id", "")) for x in selected_sources])
         type_ids = sorted([str(x.get("id", "")) for x in selected_types])
         date_str = str(date_range)
-        composite = json.dumps({"dept": dept_ids, "src": src_ids, "type": type_ids, "date": date_str}, sort_keys=True)
+        composite = json.dumps({"mgr": mgr_ids, "src": src_ids, "type": type_ids, "date": date_str}, sort_keys=True)
         return hashlib.md5(composite.encode()).hexdigest()
     except Exception:
         return ""
@@ -83,19 +83,18 @@ st.info("Chọn các điều kiện bên dưới để tối ưu lượng dữ l
 # Sắp xếp các lựa chọn để hiển thị đẹp mắt
 account_types_options = sorted(account_types_list, key=lambda x: x.get("account_type_name") or "")
 account_sources_options = sorted(account_sources_list, key=lambda x: x.get("lft") or 0)
-users_options = sorted(users_list, key=lambda x: x.get("contact_name") or "")
-department_options = build_department_options(users_list)
+manager_options = build_manager_options(users_list)
 
 # Tạo form để người dùng điền thông số trước khi gọi API
 with st.form("api_filter_form"):
     col1, col2 = st.columns(2)
 
     with col1:
-        selected_departments = st.multiselect(
-            "Phòng ban",
-            options=department_options,
-            format_func=lambda x: x["dept_name"],
-            help="Chọn một hoặc nhiều phòng ban. Để trống để tải tất cả."
+        selected_managers_filter = st.multiselect(
+            "Người phụ trách",
+            options=manager_options,
+            format_func=lambda x: x["contact_name"],
+            help="Chọn một hoặc nhiều người phụ trách. Để trống để tải tất cả."
         )
         today = datetime.today().date()
         first_day_of_month = today.replace(day=1)
@@ -135,7 +134,7 @@ if submitted and not is_currently_loading:
         st.stop()
 
     # Tính hash key của bộ lọc hiện tại
-    current_fetch_key = compute_fetch_key(selected_departments, selected_sources, selected_types, date_range)
+    current_fetch_key = compute_fetch_key(selected_managers_filter, selected_sources, selected_types, date_range)
     last_fetch_key = st.session_state.get("last_fetch_key", "")
 
     # Nếu cùng bộ lọc → dữ liệu đã có, skip API fetch
@@ -149,7 +148,7 @@ if submitted and not is_currently_loading:
             # 2.1. Mở rộng nguồn con và xây dựng bộ lọc
             src_ids = expand_source_ids(selected_sources, account_sources_list)
             type_ids = [int(x["id"]) for x in selected_types if "id" in x]
-            manager_ids = build_user_ids_by_departments(selected_departments, users_list)
+            manager_ids = [int(x["user_id"]) for x in selected_managers_filter if "user_id" in x]
 
             filtering_conditions = build_filtering_conditions(
                 manager_ids, src_ids, type_ids, date_range

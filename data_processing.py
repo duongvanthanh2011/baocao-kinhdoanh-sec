@@ -13,61 +13,22 @@ from datetime import datetime, time, timezone, timedelta
 VN_TZ = timezone(timedelta(hours=7))
 
 
-def build_department_options(users_list):
+def build_manager_options(users_list):
     """
-    Tạo danh sách phòng ban unique để hiển thị trên UI.
+    Tạo danh sách người phụ trách (user_id + contact_name) để hiển thị trên UI.
     Output phù hợp cho st.multiselect.
     """
     if not users_list:
         return []
-
-    dept_map = {}
+    seen = set()
+    managers = []
     for user in users_list:
-        dept_id = user.get("dept_id")
-        dept_name = user.get("dept_name")
-        if dept_id is None or not dept_name:
-            continue
-        if dept_id not in dept_map:
-            dept_map[dept_id] = {
-                "dept_id": dept_id,
-                "dept_name": dept_name,
-            }
-
-    return sorted(dept_map.values(), key=lambda x: x["dept_name"] or "")
-
-
-def build_user_ids_by_departments(selected_departments, users_list):
-    """
-    Từ danh sách phòng ban đã chọn, trả về list user_id của toàn bộ nhân viên thuộc các phòng ban đó.
-    Đây là list sẽ dùng cho filtering_conditions["account_manager:in"].
-    """
-    if not selected_departments or not users_list:
-        return []
-
-    selected_dept_ids = {
-        str(item.get("dept_id"))
-        for item in selected_departments
-        if item.get("dept_id") is not None
-    }
-
-    if not selected_dept_ids:
-        return []
-
-    user_ids = set()
-    for user in users_list:
-        dept_id = user.get("dept_id")
-        user_id = user.get("user_id")
-
-        if dept_id is None or user_id is None:
-            continue
-
-        if str(dept_id) in selected_dept_ids:
-            try:
-                user_ids.add(int(user_id))
-            except (ValueError, TypeError):
-                continue
-
-    return sorted(user_ids)
+        uid = user.get("user_id")
+        name = user.get("contact_name") or user.get("mgr_display_name", "")
+        if uid is not None and uid not in seen and name:
+            seen.add(uid)
+            managers.append({"user_id": uid, "contact_name": name})
+    return sorted(managers, key=lambda x: x["contact_name"] or "")
 
 def convert_date_to_timestamp(date_obj, is_end_of_day=False):
     """
@@ -238,7 +199,6 @@ def transform_dataframe(df, src_ids, type_ids, account_types_list, users_list=No
     2. Đổi tên cột cho dễ đọc
     3. Trích xuất đợt học thử từ custom fields
     4. Map ID nhóm khách hàng sang tên
-    4.5. Map người phụ trách sang tên phòng ban
     5. Xử lý giá trị NaN
 
     Args:
@@ -246,7 +206,7 @@ def transform_dataframe(df, src_ids, type_ids, account_types_list, users_list=No
         src_ids: List ID nguồn đã lọc (để filter nguồn trong mỗi record)
         type_ids: List ID nhóm khách hàng đã lọc
         account_types_list: Toàn bộ danh sách nhóm khách hàng từ API (dùng để map tên)
-        users_list: Danh sách người dùng từ API (dùng để lấy phòng ban)
+        users_list: Danh sách người dùng từ API (hiện không sử dụng, giữ để tương thích)
 
     Returns:
         pd.DataFrame: DataFrame đã biến đổi, sẵn sàng cho báo cáo
@@ -278,22 +238,6 @@ def transform_dataframe(df, src_ids, type_ids, account_types_list, users_list=No
         )
     else:
         df["Nhóm khách hàng"] = "Nhóm Chung"
-
-    # 4.5. Map account_manager sang phòng ban
-    if "account_manager" in df.columns and users_list:
-        user_to_dept = {}
-        for u in users_list:
-            u_id = u.get("user_id")
-            if u_id is not None:
-                dept_name = u.get("dept_name") or "Chưa xác định"
-                user_to_dept[str(u_id)] = dept_name
-                try:
-                    user_to_dept[int(u_id)] = dept_name
-                except (ValueError, TypeError):
-                    pass
-        df["Phòng ban"] = df["account_manager"].map(user_to_dept).fillna("Chưa xác định")
-    else:
-        df["Phòng ban"] = "Chưa xác định"
 
     # 5. Đảm bảo không có giá trị NaN làm gãy thuật toán
     df["Mối quan hệ"] = df["Mối quan hệ"].fillna("CHƯA XÁC ĐỊNH")
