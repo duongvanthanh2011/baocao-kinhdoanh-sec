@@ -32,22 +32,25 @@ def add_indicator_columns(df_filtered):
 
 def compute_report_1(df_filtered):
     """
-    Tính toán Báo cáo 1: Theo Người phụ trách & Nhóm khách hàng (dưới dạng flat DataFrame).
+    Tính toán Báo cáo 1: Theo Người phụ trách & Nguồn khách hàng & Nhóm khách hàng (dưới dạng flat DataFrame).
     """
     status_cols = list(RELATION_MAPPING.keys())
-    cols = ['Thời gian xuất data', 'Người phụ trách', 'Nhóm khách hàng', 'Tổng số Data'] + status_cols
+    cols = ['Thời gian xuất data', 'Người phụ trách', 'Nguồn khách hàng', 'Nhóm khách hàng', 'Tổng số Data'] + status_cols
 
     if df_filtered.empty:
         return pd.DataFrame(columns=cols)
 
     fetch_time = st.session_state.get("fetch_time", datetime.now().strftime("%Hh%M ngày %d/%m"))
 
+    df_exploded = df_filtered.explode("_nguon_kh_list").copy()
+    df_exploded.rename(columns={"_nguon_kh_list": "Nguồn khách hàng"}, inplace=True)
+
     agg_dict = {col: (col, "sum") for col in status_cols}
     agg_dict["Count"] = ("Mã KH", "count")
 
     result = (
-        df_filtered
-        .groupby(["Người phụ trách", "Nhóm khách hàng"])
+        df_exploded
+        .groupby(["Người phụ trách", "Nguồn khách hàng", "Nhóm khách hàng"])
         .agg(**agg_dict)
         .reset_index()
     )
@@ -165,6 +168,7 @@ def prepare_excel_report_1(df_edited):
         total_row = {
             'Thời gian xuất data': df_excel['Thời gian xuất data'].iloc[0] if len(df_excel) > 0 else '',
             'Người phụ trách': 'TỔNG CỘNG',
+            'Nguồn khách hàng': '',
             'Nhóm khách hàng': '',
             'Tổng số Data': df_excel['Tổng số Data'].sum(),
         }
@@ -179,7 +183,7 @@ def prepare_excel_report_1(df_edited):
         df_excel['TỈ LỆ HỌC VIÊN TIỀM NĂNG'] = ((df_excel['ĐÃ CHỐT'] + df_excel['ĐÃ CỌC'] + df_excel['MEETING PTKD']) / tot * 100).fillna(0)
         df_excel['TỈ LỆ DATA ĐANG CHĂM SÓC'] = ((df_excel['ĐÃ CHỐT'] + df_excel['ĐÃ CỌC'] + df_excel['MEETING PTKD'] + df_excel['HỌC VIÊN TIỀM NĂNG']) / tot * 100).fillna(0)
             
-    cols_to_keep = ['Thời gian xuất data', 'Người phụ trách', 'Nhóm khách hàng', 'Tổng số Data'] + list(RELATION_MAPPING.keys()) + ['TỈ LỆ CỌC - CHỐT', 'TỈ LỆ HỌC VIÊN TIỀM NĂNG', 'TỈ LỆ DATA ĐANG CHĂM SÓC']
+    cols_to_keep = ['Thời gian xuất data', 'Người phụ trách', 'Nguồn khách hàng', 'Nhóm khách hàng', 'Tổng số Data'] + list(RELATION_MAPPING.keys()) + ['TỈ LỆ CỌC - CHỐT', 'TỈ LỆ HỌC VIÊN TIỀM NĂNG', 'TỈ LỆ DATA ĐANG CHĂM SÓC']
     return df_excel[cols_to_keep]
 
 

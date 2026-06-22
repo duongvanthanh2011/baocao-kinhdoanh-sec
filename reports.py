@@ -38,7 +38,7 @@ __all__ = [
 
 def render_report_1(result):
     """Hiển thị Báo cáo 1 bằng bảng phân cấp AgGrid hỗ trợ chỉnh sửa và tính toán động."""
-    st.subheader("Bản xem trước: Báo cáo theo Người phụ trách & Nhóm khách hàng")
+    st.subheader("Bản xem trước: Báo cáo theo Người phụ trách & Nguồn khách hàng & Nhóm khách hàng")
     
     state_key = "report_1_edited_df"
     
@@ -50,6 +50,7 @@ def render_report_1(result):
         current_state = st.session_state[state_key]
         if (len(current_state) != len(result) or 
             not (current_state['Người phụ trách'].equals(result['Người phụ trách']) and 
+                 current_state['Nguồn khách hàng'].equals(result['Nguồn khách hàng']) and
                  current_state['Nhóm khách hàng'].equals(result['Nhóm khách hàng']))):
             st.session_state[state_key] = result.copy()
             
@@ -66,8 +67,9 @@ def render_report_1(result):
     # Xây dựng GridOptions cho AgGrid
     gb = GridOptionsBuilder.from_dataframe(df_to_show)
     
-    # Thiết lập nhóm phân cấp: chỉ group theo Người phụ trách
+    # Thiết lập nhóm phân cấp: group theo Người phụ trách, sau đó Nguồn khách hàng
     gb.configure_column("Người phụ trách", rowGroup=True, hide=True)
+    gb.configure_column("Nguồn khách hàng", rowGroup=True, hide=True)
     gb.configure_column("Nhóm khách hàng", width=140, pinned="left", wrapHeaderText=True, autoHeaderHeight=True)
     gb.configure_column("Thời gian xuất data", width=130, pinned="left", wrapHeaderText=True, autoHeaderHeight=True)
     
