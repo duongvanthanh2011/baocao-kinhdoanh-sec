@@ -25,6 +25,11 @@ ACCOUNT_FIELDS = (
     "account_manager,relation_id,mgr_display_name,relation_name,"
     "account_source,account_source_details,detail_custom_fields_display_value,account_type"
 )
+COMMENT_FIELDS = (
+    "id,comment_title,content,created_at,creator,creator_display_name,"
+    "account_id,account_name,account_relation_id,account_avatar,"
+    "account_relation_name,account_relation_color_text,token_key,is_feedback"
+)
 
 # TCP connection pool — reuse keep-alive across paginated requests
 _session = requests.Session()
@@ -181,3 +186,87 @@ def fetch_accounts_with_progress(headers, url_base, filtering_conditions):
     progress_bar.empty()
     status_text.empty()
     return all_records, None
+
+
+def fetch_account_comments_with_progress(headers, url_base, account_ids, progress_container=None):
+    """Lấy comments cho từng account và gom theo creator -> account."""
+    unique_account_ids = []
+    seen = set()
+    for account_id in account_ids:
+        if account_id is None or account_id == "":
+            continue
+        try:
+            normalized_id = int(account_id)
+        except (TypeError, ValueError):
+            normalized_id = account_id
+        if normalized_id in seen:
+            continue
+        seen.add(normalized_id)
+        unique_account_ids.append(normalized_id)
+
+    user_comments = {}
+    client_comments = {}
+    total_accounts = len(unique_account_ids)
+
+    if total_accounts == 0:
+        return user_comments, None
+
+    ui = progress_container or st
+    progress_bar = ui.progress(0, text="⏳ Đang tải bình luận khách hàng...")
+    status_text = ui.empty()
+    params = {"fields": COMMENT_FIELDS, "limit": 1000}
+
+    for idx, account_id in enumerate(unique_account_ids, start=1):
+        url = f"{url_base}/api/v6/accounts/{account_id}/comments"
+        page_label = f"{idx}/{total_accounts}"
+
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                res = _session.get(url, headers=headers, params=params, timeout=CATALOG_TIMEOUT)
+                res.raise_for_status()
+                data = res.json()
+                break
+            except requests.exceptions.HTTPError as e:
+                code = e.response.status_code if e.response is not None else "N/A"
+                if code == 429 and attempt < MAX_RETRIES:
+                    status_text.warning(f"⚠️ Account {account_id}: rate-limit (429) — thử lại {attempt + 1}/{MAX_RETRIES}...")
+                    time.sleep(RETRY_DELAY * 2)
+                    continue
+                progress_bar.empty()
+                status_text.empty()
+                return None, f"❌ Lỗi HTTP {code} khi tải comments account {account_id}: {e}"
+            except Exception as e:
+                if attempt == MAX_RETRIES:
+                    progress_bar.empty()
+                    status_text.empty()
+                    return None, f"❌ Lỗi khi tải comments account {account_id}: {e}"
+                status_text.warning(f"⚠️ Account {account_id}: thử lại {attempt + 1}/{MAX_RETRIES}...")
+                time.sleep(RETRY_DELAY)
+
+        for comment in data.get("data", []):
+            creator = comment.get("creator")
+            if creator is None:
+                continue
+            if creator not in user_comments:
+                user_comments[creator] = {}
+
+            client = comment.get("account_id")
+            client_name = comment.get("account_name", "")
+            if client not in client_comments:
+                client_comments[client] = {
+                    "name": client_name,
+                    "account_id": client,
+                    "comments": []
+                }
+
+            client_comments[client]["comments"].append(comment)
+            user_comments[creator][client] = client_comments[client]
+
+        pct = idx / total_accounts
+        progress_bar.progress(pct, text=f"⏳ Đang tải bình luận: {page_label}")
+        status_text.info(f"✅ Đã xử lý {page_label} khách hàng")
+
+    progress_bar.progress(1.0, text="✅ Hoàn thành tải bình luận")
+    progress_bar.empty()
+    status_text.empty()
+    return user_comments, None

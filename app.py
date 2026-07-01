@@ -12,9 +12,15 @@ from datetime import datetime
 
 # Import các module nội bộ
 from config import get_api_key, get_url_base, get_headers
-from api_client import get_account_types, get_account_sources, get_users, fetch_accounts_with_progress
+from api_client import get_account_types, get_account_sources, get_users, fetch_accounts_with_progress, fetch_account_comments_with_progress
 from data_processing import expand_source_ids, build_filtering_conditions, transform_dataframe, build_manager_options
-from reports import add_indicator_columns, compute_report_1, compute_report_2, render_report_1, render_report_2
+from report_calculations import compute_report_2_from_user_comments, flatten_user_comments_details
+from reports import (
+    add_indicator_columns,
+    compute_report_1,
+    render_report_1,
+    render_report_2_comments,
+)
 
 # ==========================================
 # KHỞI TẠO CẤU HÌNH
@@ -49,6 +55,18 @@ if "is_loading" not in st.session_state:
 # Fetch key — hash của bộ lọc đã dùng, tránh tải lại cùng bộ lọc
 if "last_fetch_key" not in st.session_state:
     st.session_state["last_fetch_key"] = ""
+if "last_date_range" not in st.session_state:
+    st.session_state["last_date_range"] = None
+if "report_2_comments_result" not in st.session_state:
+    st.session_state["report_2_comments_result"] = None
+if "report_2_comment_details" not in st.session_state:
+    st.session_state["report_2_comment_details"] = None
+if "report_2_user_comments" not in st.session_state:
+    st.session_state["report_2_user_comments"] = None
+if "pending_report_2_comments" not in st.session_state:
+    st.session_state["pending_report_2_comments"] = False
+if "report_2_status_message" not in st.session_state:
+    st.session_state["report_2_status_message"] = ""
 
 if not API_KEY:
     st.warning("⚠️ Chưa cấu hình `GETFLY_API_KEY` trong file `.env`. Hãy cấu hình để sử dụng đầy đủ chức năng.")
@@ -71,6 +89,32 @@ def compute_fetch_key(selected_managers, selected_sources, selected_types, date_
         return hashlib.md5(composite.encode()).hexdigest()
     except Exception:
         return ""
+
+
+def request_report_2_comments():
+    """Đánh dấu tạo lại Báo cáo 2 tương tác trong lần rerun kế tiếp."""
+    st.session_state["pending_report_2_comments"] = True
+    st.session_state["report_2_status_message"] = ""
+    st.session_state["report_2_user_comments"] = None
+    st.session_state["report_2_comments_result"] = None
+    st.session_state["report_2_comment_details"] = None
+    clear_report_2_date_filter_state()
+
+
+def clear_report_2_date_filter_state():
+    """Xóa state slider ngày để lần tạo report mới dùng đúng biên ngày mới."""
+    for key in ("report_2_date_filter_mode", "report_2_single_day_slider", "report_2_range_slider"):
+        if key in st.session_state:
+            del st.session_state[key]
+
+
+def normalize_report_2_date_bounds(default_date_range):
+    """Lấy biên ngày cho bộ lọc Báo cáo 2 từ lần tải dữ liệu gần nhất."""
+    saved_range = st.session_state.get("last_date_range") or default_date_range
+    if saved_range and len(saved_range) == 2:
+        return saved_range[0], saved_range[1]
+    today = datetime.today().date()
+    return today, today
 
 
 # ==========================================
@@ -139,6 +183,7 @@ if submitted and not is_currently_loading:
 
     # Nếu cùng bộ lọc → dữ liệu đã có, skip API fetch
     if current_fetch_key == last_fetch_key and st.session_state["raw_df"] is not None:
+        st.session_state["last_date_range"] = list(date_range)
         st.info("✅ Dữ liệu với cùng bộ lọc đã được tải trước đó. Sử dụng dữ liệu hiện có.")
     else:
         # Đánh dấu trạng thái loading — ngăn người dùng nhấn lại trong lúc đang xử lý
@@ -178,6 +223,13 @@ if submitted and not is_currently_loading:
             st.session_state["filtered_src_ids"] = src_ids
             st.session_state["filtered_type_ids"] = type_ids
             st.session_state["last_fetch_key"] = current_fetch_key
+            st.session_state["last_date_range"] = list(date_range)
+            st.session_state["report_2_comments_result"] = None
+            st.session_state["report_2_comment_details"] = None
+            st.session_state["report_2_user_comments"] = None
+            st.session_state["pending_report_2_comments"] = False
+            st.session_state["report_2_status_message"] = ""
+            clear_report_2_date_filter_state()
             st.success(f"Đã tải thành công {len(df)} bản ghi từ hệ thống.")
 
         except Exception as e:
@@ -218,17 +270,104 @@ if st.session_state["raw_df"] is not None:
         # Thêm các cột chỉ báo
         df_filtered = add_indicator_columns(df_filtered)
 
-        # Tính toán 2 báo cáo
+        # Tính toán báo cáo 1. Báo cáo 2 tương tác sẽ gọi comments khi người dùng bấm nút trong tab 2.
         result = compute_report_1(df_filtered)
-        result_2 = compute_report_2(df_filtered)
+
+    if st.session_state.get("pending_report_2_comments"):
+        account_ids = df_filtered["id"].dropna().unique().tolist() if "id" in df_filtered.columns else []
+        if not account_ids:
+            st.session_state["pending_report_2_comments"] = False
+            st.session_state["report_2_status_message"] = "Không tìm thấy ID khách hàng trong dữ liệu đã tải để lấy bình luận."
+        else:
+            st.info("Đang lấy bình luận từng khách hàng và tổng hợp báo cáo tương tác...")
+            user_comments, comments_error = fetch_account_comments_with_progress(HEADERS, URL_BASE, account_ids)
+
+            st.session_state["pending_report_2_comments"] = False
+            if comments_error:
+                st.session_state["report_2_status_message"] = comments_error
+            else:
+                date_range_for_comments = st.session_state.get("last_date_range") or list(date_range)
+                result_2_comments = compute_report_2_from_user_comments(user_comments, date_range_for_comments)
+                comment_details = flatten_user_comments_details(user_comments, date_range_for_comments)
+                st.session_state["report_2_user_comments"] = user_comments
+                st.session_state["report_2_comments_result"] = result_2_comments
+                st.session_state["report_2_comment_details"] = comment_details
+                st.session_state["report_2_status_message"] = "Đã tạo báo cáo tương tác từ dữ liệu bình luận."
+            st.rerun()
 
     st.success("Tạo báo cáo thành công!")
 
     # Hiển thị báo cáo trong 2 tab
-    tab1, tab2 = st.tabs(["📋 Báo cáo 1: Theo Người phụ trách & Nhóm khách hàng", "🌐 Báo cáo 2: Theo Nguồn khách hàng & Nhóm"])
+    tab1, tab2 = st.tabs(["📋 Báo cáo 1: Theo Người phụ trách & Nhóm khách hàng", "💬 Báo cáo 2: Tương tác theo người phụ trách"])
 
     with tab1:
         render_report_1(result)
 
     with tab2:
-        render_report_2(result_2)
+        st.button(
+            "🧾 Tạo báo cáo tương tác",
+            key="create_report_2_comments",
+            on_click=request_report_2_comments,
+            disabled=st.session_state.get("pending_report_2_comments", False),
+        )
+
+        status_message = st.session_state.get("report_2_status_message", "")
+        if status_message:
+            if status_message.startswith("❌") or status_message.startswith("Không"):
+                st.warning(status_message)
+            else:
+                st.success(status_message)
+
+        if st.session_state.get("report_2_user_comments") is not None:
+            min_report_2_date, max_report_2_date = normalize_report_2_date_bounds(date_range)
+            if min_report_2_date > max_report_2_date:
+                min_report_2_date, max_report_2_date = max_report_2_date, min_report_2_date
+
+            st.markdown("#### Bộ lọc thời gian comments")
+            if min_report_2_date == max_report_2_date:
+                st.info(f"Chỉ có dữ liệu trong ngày {min_report_2_date.strftime('%d/%m/%Y')}.")
+                report_2_filter_range = [min_report_2_date, max_report_2_date]
+            else:
+                filter_mode = st.radio(
+                    "Chế độ lọc",
+                    ["Khoảng ngày", "Một ngày"],
+                    horizontal=True,
+                    key="report_2_date_filter_mode",
+                )
+
+                if filter_mode == "Một ngày":
+                    selected_day = st.slider(
+                        "Ngày cần xem",
+                        min_value=min_report_2_date,
+                        max_value=max_report_2_date,
+                        value=min_report_2_date,
+                        format="DD/MM/YYYY",
+                        key="report_2_single_day_slider",
+                    )
+                    report_2_filter_range = [selected_day, selected_day]
+                else:
+                    selected_range = st.slider(
+                        "Khoảng ngày comments",
+                        min_value=min_report_2_date,
+                        max_value=max_report_2_date,
+                        value=(min_report_2_date, max_report_2_date),
+                        format="DD/MM/YYYY",
+                        key="report_2_range_slider",
+                    )
+                    report_2_filter_range = list(selected_range)
+
+            user_comments = st.session_state["report_2_user_comments"]
+            st.session_state["report_2_comments_result"] = compute_report_2_from_user_comments(
+                user_comments,
+                report_2_filter_range,
+            )
+            st.session_state["report_2_comment_details"] = flatten_user_comments_details(
+                user_comments,
+                report_2_filter_range,
+            )
+
+        if st.session_state.get("report_2_comments_result") is not None:
+            render_report_2_comments(
+                st.session_state["report_2_comments_result"],
+                st.session_state.get("report_2_comment_details"),
+            )

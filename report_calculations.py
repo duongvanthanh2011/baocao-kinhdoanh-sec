@@ -8,7 +8,7 @@ Chứa:
 
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, time
 from report_utils import TRAO_DOI_LABELS, TIEM_NANG_LABELS, COC_CHOT_LABELS, RELATION_MAPPING
 
 def add_indicator_columns(df_filtered):
@@ -16,7 +16,7 @@ def add_indicator_columns(df_filtered):
     Tạo các cột chỉ báo (0/1) trên dữ liệu đã lọc.
     Cần gọi trước khi tính báo cáo.
     """
-    # Các chỉ báo phục vụ Báo cáo 2 (giữ nguyên để tránh lỗi tương thích)
+    # Các chỉ báo phục vụ logic phân loại chung.
     df_filtered["Data_trao_doi_duoc"] = df_filtered["Mối quan hệ"].isin(TRAO_DOI_LABELS).astype(int)
     df_filtered["Data_tiem_nang"]     = df_filtered["Mối quan hệ"].isin(TIEM_NANG_LABELS).astype(int)
     df_filtered["Data_coc_chot"]      = df_filtered["Mối quan hệ"].isin(COC_CHOT_LABELS).astype(int)
@@ -63,101 +63,157 @@ def compute_report_1(df_filtered):
     result[int_cols] = result[int_cols].astype(int)
 
     return result
+def _parse_comment_created_at(value):
+    """Chuyển created_at của comment về datetime, trả None nếu dữ liệu lỗi."""
+    if value is None or value == "":
+        return None
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return None
+    return parsed.to_pydatetime()
 
 
+def _normalize_date_range(date_range):
+    """Chuẩn hóa khoảng ngày từ Streamlit date_input thành datetime đầu/cuối ngày."""
+    if not date_range or len(date_range) != 2:
+        return None, None
+    start_date, end_date = date_range
+    return datetime.combine(start_date, time.min), datetime.combine(end_date, time.max)
 
 
-def compute_report_2(df_filtered):
+def compute_report_2_from_user_comments(user_comments, date_range):
     """
-    Tính toán Báo cáo 2: Theo Nguồn khách hàng & Nhóm khách hàng (dưới dạng flat DataFrame).
+    Tính Báo cáo 2 mới theo người phụ trách từ user_comments.
+
+    Chỉ tính bình luận có created_at nằm trong Khoảng ngày tạo đã chọn và thuộc đúng creator
+    của nhánh user_comments hiện tại.
     """
-    if df_filtered.empty:
-        cols = [
-            'Thời gian xuất data', 'Nguồn khách hàng', 'Nhóm khách hàng', 
-            'Sai Sót - Sai Đối Tượng', 'Tiềm Năng Chưa Gọi', 
-            'Data Trao Đổi Được', 'Data Tiềm Năng', 'Data Cọc Chốt', 'Tổng số Data',
-            'Cọc Khác', 'Tổng Cọc Học Thử',
-            '% Sai Số', '% Data Tiềm Năng Chưa Gọi', '% Data Trao Đổi Được', '% Data Tiềm Năng', '% Data Cọc-Chốt',
-            '% Tổng Cọc Học Thử'
-        ]
+    cols = [
+        "Thời gian xuất data",
+        "Người phụ trách",
+        "Số lượng lịch meeting",
+        "Số lượng học viên tiềm năng",
+        "Số lượng tương tác/ngày của cố vấn",
+    ]
+    if not user_comments:
         return pd.DataFrame(columns=cols)
 
+    start_dt, end_dt = _normalize_date_range(date_range)
     fetch_time = st.session_state.get("fetch_time", datetime.now().strftime("%Hh%M ngày %d/%m"))
+    rows = []
 
-    df_exploded = df_filtered.explode("_nguon_kh_list").copy()
-    df_exploded.rename(columns={"_nguon_kh_list": "Nguồn khách hàng"}, inplace=True)
+    for creator, clients in user_comments.items():
+        meeting_count = 0
+        potential_count = 0
+        total_comments = 0
+        creator_name = str(creator)
+        seen_comment_ids = set()
 
-    result_2 = (
-        df_exploded
-        .groupby(["Nguồn khách hàng", "Nhóm khách hàng"])
-        .agg(
-            sai_so_sai_doi_tuong=("SAI SỐ - SAI ĐỐI TƯỢNG", "sum"),
-            tiem_nang_chua_goi=("TIỀM NĂNG CHƯA GỌI", "sum"),
-            Data_trao_doi_duoc=("Data_trao_doi_duoc", "sum"),
-            Data_tiem_nang=("Data_tiem_nang", "sum"),
-            Data_coc_chot=("Data_coc_chot", "sum"),
-            Count=("Mã KH", "count"),
-        )
-        .reset_index()
-    )
+        for client_data in clients.values():
+            for comment in client_data.get("comments", []):
+                if comment.get("creator") != creator:
+                    continue
 
-    result_2.rename(columns={
-        "sai_so_sai_doi_tuong": "Sai Sót - Sai Đối Tượng",
-        "tiem_nang_chua_goi": "Tiềm Năng Chưa Gọi",
-        "Data_trao_doi_duoc": "Data Trao Đổi Được",
-        "Data_tiem_nang": "Data Tiềm Năng",
-        "Data_coc_chot": "Data Cọc Chốt",
-        "Count": "Tổng số Data"
-    }, inplace=True)
+                comment_id = comment.get("id")
+                if comment_id in seen_comment_ids:
+                    continue
+                seen_comment_ids.add(comment_id)
 
-    result_2['Thời gian xuất data'] = fetch_time
-    result_2['Cọc Khác'] = 0
-    result_2['Tổng Cọc Học Thử'] = 0
+                created_at = _parse_comment_created_at(comment.get("created_at"))
+                if created_at is None:
+                    continue
+                if start_dt and created_at < start_dt:
+                    continue
+                if end_dt and created_at > end_dt:
+                    continue
 
-    result_2['% Sai Số'] = 0.0
-    result_2['% Data Tiềm Năng Chưa Gọi'] = 0.0
-    result_2['% Data Trao Đổi Được'] = 0.0
-    result_2['% Data Tiềm Năng'] = 0.0
-    result_2['% Data Cọc-Chốt'] = 0.0
-    result_2['% Tổng Cọc Học Thử'] = 0.0
+                creator_name = comment.get("creator_display_name") or creator_name
+                relation_name = comment.get("account_relation_name")
+                total_comments += 1
+                if relation_name == "MEETING PTKD":
+                    meeting_count += 1
+                if relation_name == "HỌC VIÊN TIỀM NĂNG":
+                    potential_count += 1
 
-    cols_order = [
-        'Thời gian xuất data', 'Nguồn khách hàng', 'Nhóm khách hàng', 
-        'Sai Sót - Sai Đối Tượng', 'Tiềm Năng Chưa Gọi', 
-        'Data Trao Đổi Được', 'Data Tiềm Năng', 'Data Cọc Chốt', 'Tổng số Data',
-        'Cọc Khác', 'Tổng Cọc Học Thử',
-        '% Sai Số', '% Data Tiềm Năng Chưa Gọi', '% Data Trao Đổi Được', '% Data Tiềm Năng', '% Data Cọc-Chốt',
-        '% Tổng Cọc Học Thử'
+        if total_comments > 0:
+            rows.append({
+                "Thời gian xuất data": fetch_time,
+                "Người phụ trách": creator_name,
+                "Số lượng lịch meeting": meeting_count,
+                "Số lượng học viên tiềm năng": potential_count,
+                "Số lượng tương tác/ngày của cố vấn": total_comments,
+            })
+
+    result = pd.DataFrame(rows, columns=cols)
+    if result.empty:
+        return result
+
+    count_cols = [
+        "Số lượng lịch meeting",
+        "Số lượng học viên tiềm năng",
+        "Số lượng tương tác/ngày của cố vấn",
     ]
-    result_2 = result_2[cols_order]
-    
-    int_cols = [
-        'Sai Sót - Sai Đối Tượng', 'Tiềm Năng Chưa Gọi', 
-        'Data Trao Đổi Được', 'Data Tiềm Năng', 'Data Cọc Chốt', 'Tổng số Data',
-        'Cọc Khác', 'Tổng Cọc Học Thử'
-    ]
-    result_2[int_cols] = result_2[int_cols].astype(int)
+    result[count_cols] = result[count_cols].astype(int)
+    return result.sort_values("Người phụ trách").reset_index(drop=True)
 
-    return result_2
+
+def flatten_user_comments_details(user_comments, date_range):
+    """
+    Chuyển user_comments thành bảng chi tiết comments đã lọc theo created_at.
+
+    Bảng giữ creator/client để group, và chỉ giữ 3 cột nội dung cần hiển thị.
+    """
+    cols = [
+        "creator_display_name",
+        "account_name",
+        "content",
+        "created_at",
+        "account_relation_name",
+    ]
+    if not user_comments:
+        return pd.DataFrame(columns=cols)
+
+    start_dt, end_dt = _normalize_date_range(date_range)
+    rows = []
+    seen_pairs = set()
+
+    for creator, clients in user_comments.items():
+        for client_data in clients.values():
+            for comment in client_data.get("comments", []):
+                if comment.get("creator") != creator:
+                    continue
+
+                comment_id = comment.get("id")
+                pair_key = (creator, comment_id)
+                if pair_key in seen_pairs:
+                    continue
+                seen_pairs.add(pair_key)
+
+                created_at = _parse_comment_created_at(comment.get("created_at"))
+                if created_at is None:
+                    continue
+                if start_dt and created_at < start_dt:
+                    continue
+                if end_dt and created_at > end_dt:
+                    continue
+
+                rows.append({
+                    "creator_display_name": comment.get("creator_display_name", ""),
+                    "account_name": comment.get("account_name", ""),
+                    "content": comment.get("content", ""),
+                    "created_at": comment.get("created_at", ""),
+                    "account_relation_name": comment.get("account_relation_name", ""),
+                })
+
+    result = pd.DataFrame(rows, columns=cols)
+    if result.empty:
+        return result
+    return result.sort_values(["creator_display_name", "account_name", "created_at"]).reset_index(drop=True)
 
 
 # ==========================================
 # CÁC HÀM TRỢ GIÚP XUẤT FILE EXCEL CHO PYTHON
 # ==========================================
-
-def compute_excel_percentages(df_excel):
-    """
-    Tính toán tỷ lệ phần trăm động trên DataFrame phục vụ xuất Excel.
-    Tái sử dụng chung để tránh lặp logic toán học.
-    """
-    tot = df_excel['Tổng số Data']
-    df_excel['% Sai Số'] = (df_excel['Sai Sót - Sai Đối Tượng'] / tot * 100).fillna(0)
-    df_excel['% Data Tiềm Năng Chưa Gọi'] = (df_excel['Tiềm Năng Chưa Gọi'] / tot * 100).fillna(0)
-    df_excel['% Data Trao Đổi Được'] = (df_excel['Data Trao Đổi Được'] / tot * 100).fillna(0)
-    df_excel['% Data Tiềm Năng'] = (df_excel['Data Tiềm Năng'] / tot * 100).fillna(0)
-    df_excel['% Data Cọc-Chốt'] = (df_excel['Data Cọc Chốt'] / tot * 100).fillna(0)
-    df_excel['% Tổng Cọc Học Thử'] = (df_excel['Tổng Cọc Học Thử'] / tot * 100).fillna(0)
-    return df_excel
 
 
 def prepare_excel_report_1(df_edited):
@@ -186,35 +242,3 @@ def prepare_excel_report_1(df_edited):
     cols_to_keep = ['Thời gian xuất data', 'Người phụ trách', 'Nguồn khách hàng', 'Nhóm khách hàng', 'Tổng số Data'] + list(RELATION_MAPPING.keys()) + ['TỈ LỆ CỌC - CHỐT', 'TỈ LỆ HỌC VIÊN TIỀM NĂNG', 'TỈ LỆ DATA ĐANG CHĂM SÓC']
     return df_excel[cols_to_keep]
 
-
-def prepare_excel_report_2(df_edited):
-    """Tính toán bảng hoàn chỉnh gồm phần trăm và dòng tổng cộng cho Report 2 (dùng cho download Excel)."""
-    df_excel = df_edited.copy()
-    df_excel = compute_excel_percentages(df_excel)
-    
-    if not df_excel.empty:
-        total_row = {
-            'Thời gian xuất data': df_excel['Thời gian xuất data'].iloc[0] if len(df_excel) > 0 else '',
-            'Nguồn khách hàng': 'TỔNG CỘNG',
-            'Nhóm khách hàng': '',
-            'Sai Sót - Sai Đối Tượng': df_excel['Sai Sót - Sai Đối Tượng'].sum(),
-            'Tiềm Năng Chưa Gọi': df_excel['Tiềm Năng Chưa Gọi'].sum(),
-            'Data Trao Đổi Được': df_excel['Data Trao Đổi Được'].sum(),
-            'Data Tiềm Năng': df_excel['Data Tiềm Năng'].sum(),
-            'Data Cọc Chốt': df_excel['Data Cọc Chốt'].sum(),
-            'Tổng số Data': df_excel['Tổng số Data'].sum(),
-            'Cọc Khác': df_excel['Cọc Khác'].sum(),
-            'Tổng Cọc Học Thử': df_excel['Tổng Cọc Học Thử'].sum(),
-        }
-        
-        tot_count = total_row['Tổng số Data']
-        total_row['% Sai Số'] = (total_row['Sai Sót - Sai Đối Tượng'] / tot_count * 100) if tot_count else 0
-        total_row['% Data Tiềm Năng Chưa Gọi'] = (total_row['Tiềm Năng Chưa Gọi'] / tot_count * 100) if tot_count else 0
-        total_row['% Data Trao Đổi Được'] = (total_row['Data Trao Đổi Được'] / tot_count * 100) if tot_count else 0
-        total_row['% Data Tiềm Năng'] = (total_row['Data Tiềm Năng'] / tot_count * 100) if tot_count else 0
-        total_row['% Data Cọc-Chốt'] = (total_row['Data Cọc Chốt'] / tot_count * 100) if tot_count else 0
-        total_row['% Tổng Cọc Học Thử'] = (total_row['Tổng Cọc Học Thử'] / tot_count * 100) if tot_count else 0
-        
-        df_excel = pd.concat([df_excel, pd.DataFrame([total_row])], ignore_index=True)
-        
-    return df_excel
